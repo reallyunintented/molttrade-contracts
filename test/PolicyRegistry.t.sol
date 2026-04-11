@@ -259,6 +259,17 @@ contract PolicyRegistryTest is Test {
         registry.revokePolicy();
     }
 
+    function test_revokePolicy_bumpsPolicyNonce() public {
+        vm.prank(owner);
+        registry.setPolicy(_defaultConfig(), _defaultAddrs());
+        uint256 nonceBefore = registry.policyNonce(owner);
+
+        vm.prank(owner);
+        registry.revokePolicy();
+
+        assertEq(registry.policyNonce(owner), nonceBefore + 1);
+    }
+
     function test_pausePolicy_alreadyPaused_reverts() public {
         vm.prank(owner);
         registry.setPolicy(_defaultConfig(), _defaultAddrs());

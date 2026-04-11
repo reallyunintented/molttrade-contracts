@@ -38,7 +38,6 @@ contract BilateralSettlement is IBilateralSettlement {
     error Reentrancy();
     error NotOwner();
     error NotPendingOwner();
-    error ZeroOwner();
     error Expired();
     error BadNonce();
     error BadSignature();
@@ -81,16 +80,21 @@ contract BilateralSettlement is IBilateralSettlement {
     /// transfer does not take effect until `acceptOwnership` is called by the
     /// pending owner. Pass `address(0)` to cancel a pending transfer.
     function transferOwnership(address newOwner) external onlyOwner {
+        if (newOwner == address(0)) {
+            emit OwnershipTransferCanceled(owner, pendingOwner);
+        } else {
+            emit OwnershipTransferStarted(owner, newOwner);
+        }
         pendingOwner = newOwner;
-        emit OwnershipTransferStarted(owner, newOwner);
     }
 
     /// @notice Complete a two-step ownership transfer. Callable only by the
     /// current `pendingOwner`. Clears `pendingOwner` on success.
     function acceptOwnership() external {
         address pending = pendingOwner;
+        // `msg.sender != pending` already rejects pending == address(0),
+        // since msg.sender cannot be address(0) in any EVM transaction.
         if (msg.sender != pending) revert NotPendingOwner();
-        if (pending == address(0)) revert ZeroOwner();
 
         address previousOwner = owner;
         owner = pending;
