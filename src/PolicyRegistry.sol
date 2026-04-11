@@ -11,6 +11,8 @@ contract PolicyRegistry is IPolicyRegistry {
     error NotPaused();
     error ZeroAgent();
     error AllowlistTooLong(uint256 length, uint256 max);
+    error SellTokenLimitLengthMismatch(uint256 tokenCount, uint256 capCount);
+    error DuplicateSellToken(address token);
 
     uint256 public constant MAX_ALLOWLIST_LENGTH = 20;
 
@@ -28,8 +30,14 @@ contract PolicyRegistry is IPolicyRegistry {
     function setPolicy(PolicyConfig calldata config, PolicyAddresses calldata addrs) external {
         if (config.agent == address(0)) revert ZeroAgent();
         _checkAllowlistLength(addrs.allowedSellTokens.length);
+        if (addrs.allowedSellTokens.length != addrs.maxSellAmountsPerToken.length) {
+            revert SellTokenLimitLengthMismatch(
+                addrs.allowedSellTokens.length, addrs.maxSellAmountsPerToken.length
+            );
+        }
         _checkAllowlistLength(addrs.allowedBuyTokens.length);
         _checkAllowlistLength(addrs.allowedCounterparties.length);
+        _checkDuplicateSellTokens(addrs.allowedSellTokens);
         policyNonce[msg.sender]++;
         // Intentionally overwrites any prior policy including revoked ones.
         // Revocation is not permanent: owners can re-register to resume delegation.
@@ -91,9 +99,12 @@ contract PolicyRegistry is IPolicyRegistry {
         StoredPolicy storage p = _policies[owner];
         if (!p.exists || p.isRevoked || p.isPaused) return false;
         if (p.config.validUntil != 0 && block.timestamp > p.config.validUntil) return false;
-        if (!_inList(p.addrs.allowedSellTokens, sellToken)) return false;
+        bool sellTokenAllowed;
+        uint256 sellTokenCap;
+        (sellTokenAllowed, sellTokenCap) = _sellTokenPolicy(p.addrs, sellToken);
+        if (!sellTokenAllowed) return false;
         if (!_inList(p.addrs.allowedBuyTokens, buyToken)) return false;
-        if (p.config.maxSellAmountPerTrade != 0 && amount > p.config.maxSellAmountPerTrade) {
+        if (sellTokenCap != 0 && amount > sellTokenCap) {
             return false;
         }
         if (
@@ -112,9 +123,32 @@ contract PolicyRegistry is IPolicyRegistry {
         return false;
     }
 
+    function _sellTokenPolicy(PolicyAddresses storage addrs, address sellToken)
+        private
+        view
+        returns (bool allowed, uint256 cap)
+    {
+        for (uint256 i = 0; i < addrs.allowedSellTokens.length; i++) {
+            if (addrs.allowedSellTokens[i] == sellToken) {
+                return (true, addrs.maxSellAmountsPerToken[i]);
+            }
+        }
+        return (false, 0);
+    }
+
     function _checkAllowlistLength(uint256 length) private pure {
         if (length > MAX_ALLOWLIST_LENGTH) {
             revert AllowlistTooLong(length, MAX_ALLOWLIST_LENGTH);
+        }
+    }
+
+    function _checkDuplicateSellTokens(address[] calldata sellTokens) private pure {
+        for (uint256 i = 0; i < sellTokens.length; i++) {
+            for (uint256 j = i + 1; j < sellTokens.length; j++) {
+                if (sellTokens[i] == sellTokens[j]) {
+                    revert DuplicateSellToken(sellTokens[i]);
+                }
+            }
         }
     }
 }

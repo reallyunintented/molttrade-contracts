@@ -5,12 +5,12 @@ pragma solidity 0.8.24;
 struct PolicyConfig {
     address agent;
     uint64 validUntil; // unix timestamp; 0 = no expiry
-    uint256 maxSellAmountPerTrade; // 0 = no cap
 }
 
 /// @notice Allowlist addresses attached to a policy.
 struct PolicyAddresses {
     address[] allowedSellTokens;
+    uint256[] maxSellAmountsPerToken; // 0 = no cap for the corresponding sell token
     address[] allowedBuyTokens;
     /// @dev Empty = open to any counterparty.
     address[] allowedCounterparties;

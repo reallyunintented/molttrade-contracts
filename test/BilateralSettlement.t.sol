@@ -57,13 +57,17 @@ contract BilateralSettlementTest is Test {
     {
         address[] memory s = new address[](1);
         s[0] = sell;
+        uint256[] memory sellCaps = new uint256[](1);
+        sellCaps[0] = cap;
         address[] memory b = new address[](1);
         b[0] = buy;
         address[] memory cp = new address[](0);
-        PolicyConfig memory cfg =
-            PolicyConfig({ agent: agent, validUntil: 0, maxSellAmountPerTrade: cap });
+        PolicyConfig memory cfg = PolicyConfig({agent: agent, validUntil: 0});
         PolicyAddresses memory addrs = PolicyAddresses({
-            allowedSellTokens: s, allowedBuyTokens: b, allowedCounterparties: cp
+            allowedSellTokens: s,
+            maxSellAmountsPerToken: sellCaps,
+            allowedBuyTokens: b,
+            allowedCounterparties: cp
         });
         vm.prank(owner);
         registry.setPolicy(cfg, addrs);
@@ -386,11 +390,16 @@ contract BilateralSettlementTest is Test {
         b[0] = address(tokenB);
         address[] memory cp = new address[](1);
         cp[0] = ownerB;
+        uint256[] memory sellCaps = new uint256[](1);
+        sellCaps[0] = 0;
         vm.prank(ownerA);
         registry.setPolicy(
-            PolicyConfig({ agent: agentA, validUntil: 0, maxSellAmountPerTrade: 0 }),
+            PolicyConfig({agent: agentA, validUntil: 0}),
             PolicyAddresses({
-                allowedSellTokens: s, allowedBuyTokens: b, allowedCounterparties: cp
+                allowedSellTokens: s,
+                maxSellAmountsPerToken: sellCaps,
+                allowedBuyTokens: b,
+                allowedCounterparties: cp
             })
         );
         (SettlementIntent memory iA, SettlementIntent memory iB) = _makeIntents(100e18, 200e18);
@@ -405,11 +414,16 @@ contract BilateralSettlementTest is Test {
         b[0] = address(tokenB);
         address[] memory cp = new address[](1);
         cp[0] = address(0xDEAD);
+        uint256[] memory sellCaps = new uint256[](1);
+        sellCaps[0] = 0;
         vm.prank(ownerA);
         registry.setPolicy(
-            PolicyConfig({ agent: agentA, validUntil: 0, maxSellAmountPerTrade: 0 }),
+            PolicyConfig({agent: agentA, validUntil: 0}),
             PolicyAddresses({
-                allowedSellTokens: s, allowedBuyTokens: b, allowedCounterparties: cp
+                allowedSellTokens: s,
+                maxSellAmountsPerToken: sellCaps,
+                allowedBuyTokens: b,
+                allowedCounterparties: cp
             })
         );
         (SettlementIntent memory iA, SettlementIntent memory iB) = _makeIntents(100e18, 200e18);

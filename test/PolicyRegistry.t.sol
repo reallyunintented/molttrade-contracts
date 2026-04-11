@@ -20,21 +20,22 @@ contract PolicyRegistryTest is Test {
     }
 
     function _defaultConfig() internal view returns (PolicyConfig memory) {
-        return PolicyConfig({
-            agent: agent,
-            validUntil: uint64(block.timestamp + 1 days),
-            maxSellAmountPerTrade: 1000e18
-        });
+        return PolicyConfig({agent: agent, validUntil: uint64(block.timestamp + 1 days)});
     }
 
     function _defaultAddrs() internal view returns (PolicyAddresses memory) {
         address[] memory sell = new address[](1);
         sell[0] = tokenA;
+        uint256[] memory sellCaps = new uint256[](1);
+        sellCaps[0] = 1000e18;
         address[] memory buy = new address[](1);
         buy[0] = tokenB;
         address[] memory cp = new address[](0);
         return PolicyAddresses({
-            allowedSellTokens: sell, allowedBuyTokens: buy, allowedCounterparties: cp
+            allowedSellTokens: sell,
+            maxSellAmountsPerToken: sellCaps,
+            allowedBuyTokens: buy,
+            allowedCounterparties: cp
         });
     }
 
@@ -120,10 +121,37 @@ contract PolicyRegistryTest is Test {
 
     function test_checkTrade_zeroCap_allowsAny() public {
         vm.prank(owner);
-        PolicyConfig memory cfg = _defaultConfig();
-        cfg.maxSellAmountPerTrade = 0;
-        registry.setPolicy(cfg, _defaultAddrs());
+        PolicyAddresses memory addrs = _defaultAddrs();
+        addrs.maxSellAmountsPerToken[0] = 0;
+        registry.setPolicy(_defaultConfig(), addrs);
         assertTrue(registry.checkTrade(owner, tokenA, tokenB, type(uint256).max, counterparty));
+    }
+
+    function test_checkTrade_usesPerTokenCaps() public {
+        address[] memory sell = new address[](2);
+        sell[0] = tokenA;
+        sell[1] = tokenB;
+        uint256[] memory sellCaps = new uint256[](2);
+        sellCaps[0] = 100;
+        sellCaps[1] = 50;
+        address[] memory buy = new address[](2);
+        buy[0] = tokenB;
+        buy[1] = tokenA;
+        address[] memory cp = new address[](0);
+
+        vm.prank(owner);
+        registry.setPolicy(
+            _defaultConfig(),
+            PolicyAddresses({
+                allowedSellTokens: sell,
+                maxSellAmountsPerToken: sellCaps,
+                allowedBuyTokens: buy,
+                allowedCounterparties: cp
+            })
+        );
+
+        assertTrue(registry.checkTrade(owner, tokenA, tokenB, 75, counterparty));
+        assertFalse(registry.checkTrade(owner, tokenB, tokenA, 75, counterparty));
     }
 
     function test_checkTrade_specificCounterparty_allowed() public {
@@ -134,7 +162,10 @@ contract PolicyRegistryTest is Test {
         address[] memory cp = new address[](1);
         cp[0] = counterparty;
         PolicyAddresses memory addrs = PolicyAddresses({
-            allowedSellTokens: sell, allowedBuyTokens: buy, allowedCounterparties: cp
+            allowedSellTokens: sell,
+            maxSellAmountsPerToken: _defaultAddrs().maxSellAmountsPerToken,
+            allowedBuyTokens: buy,
+            allowedCounterparties: cp
         });
         vm.prank(owner);
         registry.setPolicy(_defaultConfig(), addrs);
@@ -149,7 +180,10 @@ contract PolicyRegistryTest is Test {
         address[] memory cp = new address[](1);
         cp[0] = counterparty;
         PolicyAddresses memory addrs = PolicyAddresses({
-            allowedSellTokens: sell, allowedBuyTokens: buy, allowedCounterparties: cp
+            allowedSellTokens: sell,
+            maxSellAmountsPerToken: _defaultAddrs().maxSellAmountsPerToken,
+            allowedBuyTokens: buy,
+            allowedCounterparties: cp
         });
         vm.prank(owner);
         registry.setPolicy(_defaultConfig(), addrs);
@@ -263,12 +297,15 @@ contract PolicyRegistryTest is Test {
 
     function test_setPolicy_revertsWhenSellAllowlistTooLong() public {
         address[] memory sell = new address[](MAX_ALLOWLIST_LENGTH + 1);
+        uint256[] memory sellCaps = new uint256[](MAX_ALLOWLIST_LENGTH + 1);
         for (uint256 i = 0; i < sell.length; i++) {
             sell[i] = address(uint160(0x1000 + i));
+            sellCaps[i] = 1000e18;
         }
 
         PolicyAddresses memory addrs = PolicyAddresses({
             allowedSellTokens: sell,
+            maxSellAmountsPerToken: sellCaps,
             allowedBuyTokens: _defaultAddrs().allowedBuyTokens,
             allowedCounterparties: _defaultAddrs().allowedCounterparties
         });
@@ -290,6 +327,7 @@ contract PolicyRegistryTest is Test {
 
         PolicyAddresses memory addrs = PolicyAddresses({
             allowedSellTokens: _defaultAddrs().allowedSellTokens,
+            maxSellAmountsPerToken: _defaultAddrs().maxSellAmountsPerToken,
             allowedBuyTokens: buy,
             allowedCounterparties: _defaultAddrs().allowedCounterparties
         });
@@ -311,6 +349,7 @@ contract PolicyRegistryTest is Test {
 
         PolicyAddresses memory addrs = PolicyAddresses({
             allowedSellTokens: _defaultAddrs().allowedSellTokens,
+            maxSellAmountsPerToken: _defaultAddrs().maxSellAmountsPerToken,
             allowedBuyTokens: _defaultAddrs().allowedBuyTokens,
             allowedCounterparties: cp
         });
@@ -321,6 +360,49 @@ contract PolicyRegistryTest is Test {
                 PolicyRegistry.AllowlistTooLong.selector, cp.length, MAX_ALLOWLIST_LENGTH
             )
         );
+        registry.setPolicy(_defaultConfig(), addrs);
+    }
+
+    function test_setPolicy_revertsWhenSellTokenCapsLengthMismatch() public {
+        address[] memory sell = new address[](2);
+        sell[0] = tokenA;
+        sell[1] = tokenB;
+        uint256[] memory sellCaps = new uint256[](1);
+        sellCaps[0] = 1000e18;
+
+        PolicyAddresses memory addrs = PolicyAddresses({
+            allowedSellTokens: sell,
+            maxSellAmountsPerToken: sellCaps,
+            allowedBuyTokens: _defaultAddrs().allowedBuyTokens,
+            allowedCounterparties: _defaultAddrs().allowedCounterparties
+        });
+
+        vm.prank(owner);
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                PolicyRegistry.SellTokenLimitLengthMismatch.selector, sell.length, sellCaps.length
+            )
+        );
+        registry.setPolicy(_defaultConfig(), addrs);
+    }
+
+    function test_setPolicy_revertsWhenSellTokensContainDuplicates() public {
+        address[] memory sell = new address[](2);
+        sell[0] = tokenA;
+        sell[1] = tokenA;
+        uint256[] memory sellCaps = new uint256[](2);
+        sellCaps[0] = 1000e18;
+        sellCaps[1] = 500e18;
+
+        PolicyAddresses memory addrs = PolicyAddresses({
+            allowedSellTokens: sell,
+            maxSellAmountsPerToken: sellCaps,
+            allowedBuyTokens: _defaultAddrs().allowedBuyTokens,
+            allowedCounterparties: _defaultAddrs().allowedCounterparties
+        });
+
+        vm.prank(owner);
+        vm.expectRevert(abi.encodeWithSelector(PolicyRegistry.DuplicateSellToken.selector, tokenA));
         registry.setPolicy(_defaultConfig(), addrs);
     }
 }

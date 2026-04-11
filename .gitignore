@@ -1,7 +1,6 @@
-out/
 cache/
+out/
 broadcast/
-.DS_Store
-Thumbs.db
-*.swp
-*.swo
+node_modules/
+generated/
+molttx.manifest.json
