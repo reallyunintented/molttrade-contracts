@@ -159,9 +159,46 @@ contract BilateralSettlementTest is Test {
         settlement.transferOwnership(makeAddr("newOwner"));
     }
 
-    function test_transferOwnership_revert_zeroOwner() public {
-        vm.expectRevert(BilateralSettlement.ZeroOwner.selector);
+    function test_transferOwnership_setsPendingNotOwner() public {
+        address newOwner = makeAddr("newOwner");
+        address prevOwner = settlement.owner();
+
+        settlement.transferOwnership(newOwner);
+
+        // Owner must not change until acceptOwnership is called.
+        assertEq(settlement.owner(), prevOwner);
+        assertEq(settlement.pendingOwner(), newOwner);
+    }
+
+    function test_acceptOwnership_onlyPendingOwner() public {
+        address newOwner = makeAddr("newOwner");
+        settlement.transferOwnership(newOwner);
+
+        vm.expectRevert(BilateralSettlement.NotPendingOwner.selector);
+        settlement.acceptOwnership();
+
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(BilateralSettlement.NotPendingOwner.selector);
+        settlement.acceptOwnership();
+    }
+
+    function test_acceptOwnership_whenNothingPending_reverts() public {
+        vm.expectRevert(BilateralSettlement.NotPendingOwner.selector);
+        settlement.acceptOwnership();
+    }
+
+    function test_transferOwnership_cancelWithZeroAddress() public {
+        address newOwner = makeAddr("newOwner");
+        settlement.transferOwnership(newOwner);
+        assertEq(settlement.pendingOwner(), newOwner);
+
         settlement.transferOwnership(address(0));
+        assertEq(settlement.pendingOwner(), address(0));
+
+        // Previously-pending address can no longer claim ownership.
+        vm.prank(newOwner);
+        vm.expectRevert(BilateralSettlement.NotPendingOwner.selector);
+        settlement.acceptOwnership();
     }
 
     function test_transferOwnership_handsOffFeeAdmin() public {
@@ -169,8 +206,14 @@ contract BilateralSettlementTest is Test {
         address feeRecipient = makeAddr("feeRecipient");
 
         settlement.transferOwnership(newOwner);
+        // Old owner still in charge until accept.
+        settlement.setFee(20, feeRecipient);
+
+        vm.prank(newOwner);
+        settlement.acceptOwnership();
 
         assertEq(settlement.owner(), newOwner);
+        assertEq(settlement.pendingOwner(), address(0));
 
         vm.expectRevert(BilateralSettlement.NotOwner.selector);
         settlement.setFee(30, feeRecipient);

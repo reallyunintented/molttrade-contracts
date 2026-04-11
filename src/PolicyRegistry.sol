@@ -10,6 +10,7 @@ contract PolicyRegistry is IPolicyRegistry {
     error AlreadyPaused();
     error NotPaused();
     error ZeroAgent();
+    error ZeroAddressInAllowlist();
     error AllowlistTooLong(uint256 length, uint256 max);
     error SellTokenLimitLengthMismatch(uint256 tokenCount, uint256 capCount);
     error DuplicateSellToken(address token);
@@ -37,6 +38,9 @@ contract PolicyRegistry is IPolicyRegistry {
         }
         _checkAllowlistLength(addrs.allowedBuyTokens.length);
         _checkAllowlistLength(addrs.allowedCounterparties.length);
+        _checkNoZeroAddresses(addrs.allowedSellTokens);
+        _checkNoZeroAddresses(addrs.allowedBuyTokens);
+        _checkNoZeroAddresses(addrs.allowedCounterparties);
         _checkDuplicateSellTokens(addrs.allowedSellTokens);
         policyNonce[msg.sender]++;
         // Intentionally overwrites any prior policy including revoked ones.
@@ -149,6 +153,16 @@ contract PolicyRegistry is IPolicyRegistry {
                     revert DuplicateSellToken(sellTokens[i]);
                 }
             }
+        }
+    }
+
+    /// @dev Rejects address(0) in any allowlist. A zero-address sell token would
+    /// otherwise silently no-op through SafeToken (raw call to address(0) returns
+    /// success with empty returndata), and a zero counterparty would be
+    /// unreachable anyway since BilateralSettlement rejects it in `settle`.
+    function _checkNoZeroAddresses(address[] calldata list) private pure {
+        for (uint256 i = 0; i < list.length; i++) {
+            if (list[i] == address(0)) revert ZeroAddressInAllowlist();
         }
     }
 }

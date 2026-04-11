@@ -405,4 +405,34 @@ contract PolicyRegistryTest is Test {
         vm.expectRevert(abi.encodeWithSelector(PolicyRegistry.DuplicateSellToken.selector, tokenA));
         registry.setPolicy(_defaultConfig(), addrs);
     }
+
+    function test_setPolicy_revertsWhenSellAllowlistContainsZeroAddress() public {
+        PolicyAddresses memory addrs = _defaultAddrs();
+        addrs.allowedSellTokens[0] = address(0);
+
+        vm.prank(owner);
+        vm.expectRevert(PolicyRegistry.ZeroAddressInAllowlist.selector);
+        registry.setPolicy(_defaultConfig(), addrs);
+    }
+
+    function test_setPolicy_revertsWhenBuyAllowlistContainsZeroAddress() public {
+        PolicyAddresses memory addrs = _defaultAddrs();
+        addrs.allowedBuyTokens[0] = address(0);
+
+        vm.prank(owner);
+        vm.expectRevert(PolicyRegistry.ZeroAddressInAllowlist.selector);
+        registry.setPolicy(_defaultConfig(), addrs);
+    }
+
+    function test_setPolicy_revertsWhenCounterpartyAllowlistContainsZeroAddress() public {
+        PolicyAddresses memory addrs = _defaultAddrs();
+        address[] memory cp = new address[](2);
+        cp[0] = counterparty;
+        cp[1] = address(0);
+        addrs.allowedCounterparties = cp;
+
+        vm.prank(owner);
+        vm.expectRevert(PolicyRegistry.ZeroAddressInAllowlist.selector);
+        registry.setPolicy(_defaultConfig(), addrs);
+    }
 }

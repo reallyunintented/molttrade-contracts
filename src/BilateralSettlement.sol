@@ -29,6 +29,7 @@ contract BilateralSettlement is IBilateralSettlement {
     mapping(address => uint256) public nonces;
 
     address public owner;
+    address public pendingOwner;
     address public feeRecipient;
     uint256 public feeBps;
 
@@ -36,6 +37,7 @@ contract BilateralSettlement is IBilateralSettlement {
 
     error Reentrancy();
     error NotOwner();
+    error NotPendingOwner();
     error ZeroOwner();
     error Expired();
     error BadNonce();
@@ -75,13 +77,26 @@ contract BilateralSettlement is IBilateralSettlement {
         emit FeeUpdated(bps, recipient);
     }
 
+    /// @notice Begin a two-step ownership transfer. Sets `pendingOwner`; the
+    /// transfer does not take effect until `acceptOwnership` is called by the
+    /// pending owner. Pass `address(0)` to cancel a pending transfer.
     function transferOwnership(address newOwner) external onlyOwner {
-        if (newOwner == address(0)) revert ZeroOwner();
+        pendingOwner = newOwner;
+        emit OwnershipTransferStarted(owner, newOwner);
+    }
+
+    /// @notice Complete a two-step ownership transfer. Callable only by the
+    /// current `pendingOwner`. Clears `pendingOwner` on success.
+    function acceptOwnership() external {
+        address pending = pendingOwner;
+        if (msg.sender != pending) revert NotPendingOwner();
+        if (pending == address(0)) revert ZeroOwner();
 
         address previousOwner = owner;
-        owner = newOwner;
+        owner = pending;
+        pendingOwner = address(0);
 
-        emit OwnershipTransferred(previousOwner, newOwner);
+        emit OwnershipTransferred(previousOwner, pending);
     }
 
     function DOMAIN_SEPARATOR() public view returns (bytes32) {
@@ -265,8 +280,13 @@ contract BilateralSettlement is IBilateralSettlement {
     }
 
     function _assertMinReceived(SettlementIntent calldata intent, uint256 preBalance) private view {
-        if (SafeToken.balanceOf(intent.buyToken, intent.owner) - preBalance < intent.minBuyAmount) {
-            revert AmountNotMet();
+        uint256 postBalance = SafeToken.balanceOf(intent.buyToken, intent.owner);
+        // Rebasing-down or balance-mutating buy tokens can leave postBalance
+        // below preBalance. Treat that as `AmountNotMet` rather than letting
+        // a checked subtraction revert with an opaque arithmetic panic.
+        if (postBalance < preBalance) revert AmountNotMet();
+        unchecked {
+            if (postBalance - preBalance < intent.minBuyAmount) revert AmountNotMet();
         }
     }
 
