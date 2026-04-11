@@ -4,6 +4,7 @@ pragma solidity 0.8.24;
 import "../types/MoltTradeTypes.sol";
 
 interface IBilateralSettlement {
+    event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event Settled(
         address indexed ownerA,
@@ -36,8 +37,17 @@ interface IBilateralSettlement {
     /// @notice Protocol fee owner. Can update fee params.
     function owner() external view returns (address);
 
-    /// @notice Transfer protocol fee ownership to a new admin address.
+    /// @notice Address that must call `acceptOwnership` to finalize a pending
+    /// ownership transfer, or `address(0)` if none is pending.
+    function pendingOwner() external view returns (address);
+
+    /// @notice Begin a two-step ownership transfer by setting `pendingOwner`.
+    /// Pass `address(0)` to cancel a pending transfer.
     function transferOwnership(address newOwner) external;
+
+    /// @notice Finalize a two-step ownership transfer. Callable only by the
+    /// current `pendingOwner`.
+    function acceptOwnership() external;
 
     /// @notice Current protocol fee in basis points for newly quoted settlements.
     function feeBps() external view returns (uint256);
