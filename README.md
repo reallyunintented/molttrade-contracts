@@ -38,6 +38,19 @@ What the contracts do not do:
 - discover counterparties
 - provide hosted relaying or frontend UX
 
+## Policy Model
+
+The current policy shape is V2:
+
+- `allowedSellTokens[]` defines which sell tokens are permitted
+- `maxSellAmountsPerToken[]` is index-aligned with `allowedSellTokens[]`
+- if a sell token is not listed, the trade is rejected
+- if a listed token has cap `0`, that token is allowed but uncapped
+- duplicate sell tokens are rejected on policy registration
+
+Caps are enforced in raw token units. The contracts do not do any USD/notional
+conversion.
+
 ## Status
 
 This is real code, but it is still early-stage infrastructure.
@@ -60,7 +73,28 @@ npm run build
 npm test
 ```
 
-## Deploy V2
+## Deploy Paths
+
+There are two deployment entry points:
+
+- `scripts/deploy-base-mainnet.sh`: opinionated wrapper for Base mainnet deploys
+- `scripts/deploy-v2.mjs`: generic deploy helper for Base-style environments
+
+### Base Mainnet
+
+```bash
+DEPLOYER_PRIVATE_KEY=0x... ./scripts/deploy-base-mainnet.sh
+```
+
+Optional environment variables:
+
+- `SETTLEMENT_OWNER`
+- `INITIAL_FEE_BPS`
+- `INITIAL_FEE_RECIPIENT`
+- `VERIFY=1`
+- `ETHERSCAN_API_KEY` when `VERIFY=1`
+
+### Generic Deploy V2
 
 The generic deploy helper deploys `PolicyRegistry` first, then
 `BilateralSettlement`, and writes a public manifest at
@@ -72,6 +106,8 @@ npm run deploy:v2 -- \
   --deployer-private-key 0x... \
   --settlement-owner 0x...
 ```
+
+Run `npm install` first so the `viem` dependency is available.
 
 Optional `--write-frontend-env`, `--write-network-env`, and `--write-relayer-env`
 write consumer env snippets into `./generated/`.
