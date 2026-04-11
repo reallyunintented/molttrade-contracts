@@ -51,6 +51,17 @@ The current policy shape is V2:
 Caps are enforced in raw token units. The contracts do not do any USD/notional
 conversion.
 
+## Security Assumptions
+
+- owner key compromise is out of scope for the contracts themselves
+- agent signatures are trusted only while the owner's onchain policy is active
+- stale intents are invalidated by per-owner nonce and `policyNonce` checks
+- settlement is bilateral and non-custodial; funds move directly between owner wallets
+- open-fill settlement is not supported; counterparties must be explicit
+- sell caps are enforced in raw token units, not USD or oracle-priced notionals
+- fee-on-transfer behavior is checked by actual post-transfer balance deltas
+- the contracts are not publicly audited
+
 ## Status
 
 This is real code, but it is still early-stage infrastructure.
