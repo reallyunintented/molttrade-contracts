@@ -7,6 +7,8 @@ interface IBilateralSettlement {
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
     event OwnershipTransferCanceled(address indexed owner, address indexed previousPendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
+    event ContractPaused(address indexed caller);
+    event ContractUnpaused(address indexed caller);
     event Settled(
         address indexed ownerA,
         address indexed ownerB,
@@ -42,6 +44,9 @@ interface IBilateralSettlement {
     /// ownership transfer, or `address(0)` if none is pending.
     function pendingOwner() external view returns (address);
 
+    /// @notice Whether new settlements are currently paused.
+    function paused() external view returns (bool);
+
     /// @notice Begin a two-step ownership transfer by setting `pendingOwner`.
     /// Pass `address(0)` to cancel a pending transfer.
     function transferOwnership(address newOwner) external;
@@ -58,4 +63,10 @@ interface IBilateralSettlement {
 
     /// @notice Update fee config for future settlements.
     function setFee(uint256 bps, address recipient) external;
+
+    /// @notice Pause new settlements until `unpause` is called.
+    function pause() external;
+
+    /// @notice Resume new settlements after a pause.
+    function unpause() external;
 }
