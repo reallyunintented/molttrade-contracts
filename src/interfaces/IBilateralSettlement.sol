@@ -5,6 +5,7 @@ import "../types/MoltTradeTypes.sol";
 
 interface IBilateralSettlement {
     event OwnershipTransferStarted(address indexed previousOwner, address indexed newOwner);
+    event OwnershipTransferCanceled(address indexed owner, address indexed previousPendingOwner);
     event OwnershipTransferred(address indexed previousOwner, address indexed newOwner);
     event Settled(
         address indexed ownerA,

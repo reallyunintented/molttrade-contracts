@@ -201,6 +201,36 @@ contract BilateralSettlementTest is Test {
         settlement.acceptOwnership();
     }
 
+    function test_transferOwnership_rotatesPendingOwner() public {
+        address first = makeAddr("first");
+        address second = makeAddr("second");
+
+        settlement.transferOwnership(first);
+        assertEq(settlement.pendingOwner(), first);
+
+        settlement.transferOwnership(second);
+        assertEq(settlement.pendingOwner(), second);
+
+        vm.prank(first);
+        vm.expectRevert(BilateralSettlement.NotPendingOwner.selector);
+        settlement.acceptOwnership();
+
+        vm.prank(second);
+        settlement.acceptOwnership();
+        assertEq(settlement.owner(), second);
+        assertEq(settlement.pendingOwner(), address(0));
+    }
+
+    function test_transferOwnership_cancelEmitsCanceledEvent() public {
+        address newOwner = makeAddr("newOwner");
+        settlement.transferOwnership(newOwner);
+
+        address currentOwner = settlement.owner();
+        vm.expectEmit(true, true, true, true, address(settlement));
+        emit IBilateralSettlement.OwnershipTransferCanceled(currentOwner, newOwner);
+        settlement.transferOwnership(address(0));
+    }
+
     function test_transferOwnership_handsOffFeeAdmin() public {
         address newOwner = makeAddr("newOwner");
         address feeRecipient = makeAddr("feeRecipient");
