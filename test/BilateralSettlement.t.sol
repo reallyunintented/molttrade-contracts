@@ -231,6 +231,22 @@ contract BilateralSettlementTest is Test {
         settlement.transferOwnership(address(0));
     }
 
+    function test_transferOwnership_noOpCancelBehavior() public {
+        // Calling transferOwnership(address(0)) when pendingOwner is already
+        // address(0) is a no-op: pendingOwner stays zero and a
+        // OwnershipTransferCanceled(owner, address(0)) event fires.
+        // Documenting this as an explicit decision (not a guard), so it stays
+        // visible if behavior ever changes.
+        assertEq(settlement.pendingOwner(), address(0));
+
+        address currentOwner = settlement.owner();
+        vm.expectEmit(true, true, true, true, address(settlement));
+        emit IBilateralSettlement.OwnershipTransferCanceled(currentOwner, address(0));
+        settlement.transferOwnership(address(0));
+
+        assertEq(settlement.pendingOwner(), address(0));
+    }
+
     function test_transferOwnership_handsOffFeeAdmin() public {
         address newOwner = makeAddr("newOwner");
         address feeRecipient = makeAddr("feeRecipient");
@@ -261,6 +277,102 @@ contract BilateralSettlementTest is Test {
 
         vm.expectRevert(BilateralSettlement.InvalidFeeConfig.selector);
         settlement.setFee(1, address(0));
+    }
+
+    function test_pause_onlyOwner() public {
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(BilateralSettlement.NotOwner.selector);
+        settlement.pause();
+    }
+
+    function test_pause_setsPausedFlag() public {
+        vm.expectEmit(true, false, false, false, address(settlement));
+        emit IBilateralSettlement.ContractPaused(address(this));
+        settlement.pause();
+        assertTrue(settlement.paused());
+    }
+
+    function test_pause_alreadyPaused_reverts() public {
+        settlement.pause();
+        vm.expectRevert(BilateralSettlement.AlreadyPaused.selector);
+        settlement.pause();
+    }
+
+    function test_unpause_onlyOwner() public {
+        settlement.pause();
+        vm.prank(makeAddr("stranger"));
+        vm.expectRevert(BilateralSettlement.NotOwner.selector);
+        settlement.unpause();
+    }
+
+    function test_unpause_clearsFlag() public {
+        settlement.pause();
+        vm.expectEmit(true, false, false, false, address(settlement));
+        emit IBilateralSettlement.ContractUnpaused(address(this));
+        settlement.unpause();
+        assertFalse(settlement.paused());
+    }
+
+    function test_unpause_whenNotPaused_reverts() public {
+        vm.expectRevert(BilateralSettlement.NotPaused.selector);
+        settlement.unpause();
+    }
+
+    function test_setFee_stillCallableWhilePaused() public {
+        address recipient = makeAddr("feeRecipient");
+        settlement.pause();
+        settlement.setFee(20, recipient);
+        assertEq(settlement.feeBps(), 20);
+        assertEq(settlement.feeRecipient(), recipient);
+    }
+
+    function test_transferOwnership_stillCallableWhilePaused() public {
+        address newOwner = makeAddr("newOwner");
+
+        settlement.pause();
+        settlement.transferOwnership(newOwner);
+
+        assertEq(settlement.pendingOwner(), newOwner);
+    }
+
+    function test_acceptOwnership_stillCallableWhilePaused() public {
+        address newOwner = makeAddr("newOwner");
+        settlement.transferOwnership(newOwner);
+        settlement.pause();
+
+        vm.prank(newOwner);
+        settlement.acceptOwnership();
+
+        assertEq(settlement.owner(), newOwner);
+        assertEq(settlement.pendingOwner(), address(0));
+    }
+
+    function test_settle_revertsWhenPaused() public {
+        (SettlementIntent memory iA, SettlementIntent memory iB) = _makeIntents(100e18, 200e18);
+        bytes memory sA = _sign(iA, agentAKey);
+        bytes memory sB = _sign(iB, agentBKey);
+
+        settlement.pause();
+
+        vm.expectRevert(BilateralSettlement.Paused.selector);
+        settlement.settle(iA, sA, iB, sB);
+    }
+
+    function test_settle_succeedsAfterUnpause() public {
+        (SettlementIntent memory iA, SettlementIntent memory iB) = _makeIntents(100e18, 200e18);
+        bytes memory sA = _sign(iA, agentAKey);
+        bytes memory sB = _sign(iB, agentBKey);
+
+        settlement.pause();
+        settlement.unpause();
+
+        uint256 preOwnerATokenB = tokenB.balanceOf(ownerA);
+        uint256 preOwnerBTokenA = tokenA.balanceOf(ownerB);
+
+        settlement.settle(iA, sA, iB, sB);
+
+        assertEq(tokenB.balanceOf(ownerA), preOwnerATokenB + 200e18);
+        assertEq(tokenA.balanceOf(ownerB), preOwnerBTokenA + 100e18);
     }
 
     function test_settle_protocolFee_succeeds() public {

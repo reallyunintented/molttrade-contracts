@@ -29,15 +29,19 @@ contract BilateralSettlement is IBilateralSettlement {
     mapping(address => uint256) public nonces;
 
     address public owner;
-    address public pendingOwner;
     address public feeRecipient;
     uint256 public feeBps;
+    address public pendingOwner;
+    bool public paused;
 
     bool private _entered;
 
     error Reentrancy();
     error NotOwner();
     error NotPendingOwner();
+    error Paused();
+    error AlreadyPaused();
+    error NotPaused();
     error Expired();
     error BadNonce();
     error BadSignature();
@@ -51,6 +55,11 @@ contract BilateralSettlement is IBilateralSettlement {
         _entered = true;
         _;
         _entered = false;
+    }
+
+    modifier whenNotPaused() {
+        if (paused) revert Paused();
+        _;
     }
 
     modifier onlyOwner() {
@@ -74,6 +83,20 @@ contract BilateralSettlement is IBilateralSettlement {
         feeRecipient = recipient;
 
         emit FeeUpdated(bps, recipient);
+    }
+
+    /// @notice Pause new settlements. Only callable by owner.
+    function pause() external onlyOwner {
+        if (paused) revert AlreadyPaused();
+        paused = true;
+        emit ContractPaused(msg.sender);
+    }
+
+    /// @notice Resume new settlements after a pause. Only callable by owner.
+    function unpause() external onlyOwner {
+        if (!paused) revert NotPaused();
+        paused = false;
+        emit ContractUnpaused(msg.sender);
     }
 
     /// @notice Begin a two-step ownership transfer. Sets `pendingOwner`; the
@@ -150,7 +173,7 @@ contract BilateralSettlement is IBilateralSettlement {
         bytes calldata sigA,
         SettlementIntent calldata intentB,
         bytes calldata sigB
-    ) external nonReentrant {
+    ) external whenNotPaused nonReentrant {
         // 0. Owners must be distinct
         if (intentA.owner == intentB.owner) revert IncompatibleIntents();
 
