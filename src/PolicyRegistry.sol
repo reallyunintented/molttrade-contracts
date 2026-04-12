@@ -55,6 +55,7 @@ contract PolicyRegistry is IPolicyRegistry {
         StoredPolicy storage p = _policies[msg.sender];
         if (!p.exists) revert NoPolicySet();
         if (p.isRevoked) revert AlreadyRevoked();
+        policyNonce[msg.sender]++;
         p.isRevoked = true;
         emit PolicyRevoked(msg.sender);
     }
