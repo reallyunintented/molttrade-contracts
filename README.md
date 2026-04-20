@@ -26,7 +26,7 @@ Core invariant:
 What the contracts do:
 
 - owners register a bounded trading policy
-- agents sign typed settlement intents
+- agents sign typed settlement intents with a per-intent `maxFeeBps`
 - settlement checks policy validity, replay protection, counterparties, fees,
   sell-token caps, and token compatibility
 - tokens move directly between owner wallets
@@ -48,6 +48,14 @@ The current policy shape is V2:
 - if a listed token has cap `0`, that token is allowed but uncapped
 - duplicate sell tokens are rejected on policy registration
 
+## Fee Trust Boundary
+
+- each signed settlement intent carries `maxFeeBps`, not a fixed `feeRecipient`
+- the contract applies the current onchain `feeBps` and `feeRecipient` at settle time
+- settlement is rejected if the live fee exceeds either side's signed `maxFeeBps`
+- a signer therefore bounds fee magnitude onchain, but still trusts the contract owner
+  to choose the live fee recipient and not reroute fees in an unexpected way
+
 Caps are enforced in raw token units. The contracts do not do any USD/notional
 conversion.
 
@@ -58,6 +66,8 @@ conversion.
 - stale intents are invalidated by per-owner nonce and `policyNonce` checks
 - settlement is bilateral and non-custodial; funds move directly between owner wallets
 - open-fill settlement is not supported; counterparties must be explicit
+- the fee recipient is an owner-controlled runtime parameter; only the fee ceiling
+  is signed inside intents
 - sell caps are enforced in raw token units, not USD or oracle-priced notionals
 - fee-on-transfer behavior is checked by actual post-transfer balance deltas
 - the contracts are not publicly audited

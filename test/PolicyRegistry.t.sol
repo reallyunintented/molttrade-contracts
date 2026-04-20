@@ -20,7 +20,7 @@ contract PolicyRegistryTest is Test {
     }
 
     function _defaultConfig() internal view returns (PolicyConfig memory) {
-        return PolicyConfig({agent: agent, validUntil: uint64(block.timestamp + 1 days)});
+        return PolicyConfig({ agent: agent, validUntil: uint64(block.timestamp + 1 days) });
     }
 
     function _defaultAddrs() internal view returns (PolicyAddresses memory) {
@@ -588,7 +588,7 @@ contract PolicyRegistryTest is Test {
         address[] memory sell = new address[](1);
         sell[0] = tokenA;
         uint256[] memory caps = new uint256[](1);
-        caps[0] = 5_000e18;
+        caps[0] = 5000e18;
         address[] memory buy = new address[](1);
         buy[0] = tokenB;
         address[] memory cp = new address[](0);
@@ -603,7 +603,7 @@ contract PolicyRegistryTest is Test {
             })
         );
 
-        assertTrue(registry.checkTrade(owner, tokenA, tokenB, 5_000e18, counterparty));
-        assertFalse(registry.checkTrade(owner, tokenA, tokenB, 5_001e18, counterparty));
+        assertTrue(registry.checkTrade(owner, tokenA, tokenB, 5000e18, counterparty));
+        assertFalse(registry.checkTrade(owner, tokenA, tokenB, 5001e18, counterparty));
     }
 }

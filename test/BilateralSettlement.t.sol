@@ -62,7 +62,7 @@ contract BilateralSettlementTest is Test {
         address[] memory b = new address[](1);
         b[0] = buy;
         address[] memory cp = new address[](0);
-        PolicyConfig memory cfg = PolicyConfig({agent: agent, validUntil: 0});
+        PolicyConfig memory cfg = PolicyConfig({ agent: agent, validUntil: 0 });
         PolicyAddresses memory addrs = PolicyAddresses({
             allowedSellTokens: s,
             maxSellAmountsPerToken: sellCaps,
@@ -88,8 +88,7 @@ contract BilateralSettlementTest is Test {
             nonce: settlement.nonces(ownerA),
             deadline: block.timestamp + 1 hours,
             policyNonce: registry.policyNonce(ownerA),
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
         iB = SettlementIntent({
             owner: ownerB,
@@ -101,8 +100,7 @@ contract BilateralSettlementTest is Test {
             nonce: settlement.nonces(ownerB),
             deadline: block.timestamp + 1 hours,
             policyNonce: registry.policyNonce(ownerB),
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
     }
 
@@ -393,7 +391,7 @@ contract BilateralSettlementTest is Test {
         assertEq(tokenB.balanceOf(feeCollector), feeAmountB);
     }
 
-    function test_settle_revert_staleFeeConfigAfterUpdate() public {
+    function test_settle_revert_feeExceedsSignedMaxAfterUpdate() public {
         (SettlementIntent memory iA, SettlementIntent memory iB) = _makeIntents(100e18, 200e18);
         bytes memory sA = _sign(iA, agentAKey);
         bytes memory sB = _sign(iB, agentBKey);
@@ -402,6 +400,29 @@ contract BilateralSettlementTest is Test {
 
         vm.expectRevert(BilateralSettlement.InvalidFeeConfig.selector);
         settlement.settle(iA, sA, iB, sB);
+    }
+
+    function test_settle_feeRecipientChangeWithinSignedMax_succeeds() public {
+        address feeCollectorA = makeAddr("feeCollectorA");
+        address feeCollectorB = makeAddr("feeCollectorB");
+        settlement.setFee(30, feeCollectorA);
+
+        (SettlementIntent memory iA, SettlementIntent memory iB) = _makeIntents(100e18, 200e18);
+        uint256 feeAmountA = (iA.sellAmount * settlement.feeBps()) / 10_000;
+        uint256 feeAmountB = (iB.sellAmount * settlement.feeBps()) / 10_000;
+        iA.minBuyAmount = iB.sellAmount - feeAmountB;
+        iB.minBuyAmount = iA.sellAmount - feeAmountA;
+
+        bytes memory sA = _sign(iA, agentAKey);
+        bytes memory sB = _sign(iB, agentBKey);
+
+        settlement.setFee(30, feeCollectorB);
+        settlement.settle(iA, sA, iB, sB);
+
+        assertEq(tokenA.balanceOf(feeCollectorA), 0);
+        assertEq(tokenB.balanceOf(feeCollectorA), 0);
+        assertEq(tokenA.balanceOf(feeCollectorB), feeAmountA);
+        assertEq(tokenB.balanceOf(feeCollectorB), feeAmountB);
     }
 
     function test_settle_revert_protocolFeeAmountNotMet() public {
@@ -579,7 +600,7 @@ contract BilateralSettlementTest is Test {
         sellCaps[0] = 0;
         vm.prank(ownerA);
         registry.setPolicy(
-            PolicyConfig({agent: agentA, validUntil: 0}),
+            PolicyConfig({ agent: agentA, validUntil: 0 }),
             PolicyAddresses({
                 allowedSellTokens: s,
                 maxSellAmountsPerToken: sellCaps,
@@ -603,7 +624,7 @@ contract BilateralSettlementTest is Test {
         sellCaps[0] = 0;
         vm.prank(ownerA);
         registry.setPolicy(
-            PolicyConfig({agent: agentA, validUntil: 0}),
+            PolicyConfig({ agent: agentA, validUntil: 0 }),
             PolicyAddresses({
                 allowedSellTokens: s,
                 maxSellAmountsPerToken: sellCaps,
@@ -702,8 +723,7 @@ contract BilateralSettlementTest is Test {
             nonce: settlement.nonces(ownerA),
             deadline: block.timestamp + 1 hours,
             policyNonce: registry.policyNonce(ownerA),
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
         SettlementIntent memory iB = SettlementIntent({
             owner: ownerB,
@@ -715,8 +735,7 @@ contract BilateralSettlementTest is Test {
             nonce: settlement.nonces(ownerB),
             deadline: block.timestamp + 1 hours,
             policyNonce: registry.policyNonce(ownerB),
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
 
         bytes memory sA = _sign(iA, agentAKey);
@@ -745,8 +764,7 @@ contract BilateralSettlementTest is Test {
             nonce: settlement.nonces(ownerA),
             deadline: block.timestamp + 1 hours,
             policyNonce: registry.policyNonce(ownerA),
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
         SettlementIntent memory iB = SettlementIntent({
             owner: ownerB,
@@ -758,8 +776,7 @@ contract BilateralSettlementTest is Test {
             nonce: settlement.nonces(ownerB),
             deadline: block.timestamp + 1 hours,
             policyNonce: registry.policyNonce(ownerB),
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
 
         bytes memory sA = _sign(iA, agentAKey);
@@ -835,8 +852,7 @@ contract BilateralSettlementTest is Test {
             nonce: settlement.nonces(ownerA),
             deadline: block.timestamp + 1 hours,
             policyNonce: registry.policyNonce(ownerA),
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
         SettlementIntent memory iB = SettlementIntent({
             owner: ownerB,
@@ -848,8 +864,7 @@ contract BilateralSettlementTest is Test {
             nonce: settlement.nonces(ownerB),
             deadline: block.timestamp + 1 hours,
             policyNonce: registry.policyNonce(ownerB),
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
 
         bytes memory sA = _sign(iA, agentAKey);
@@ -882,8 +897,7 @@ contract BilateralSettlementTest is Test {
             nonce: 0,
             deadline: block.timestamp + 1 hours,
             policyNonce: currentPolicyNonceA,
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
         SettlementIntent memory iB = SettlementIntent({
             owner: ownerB,
@@ -895,8 +909,7 @@ contract BilateralSettlementTest is Test {
             nonce: 0,
             deadline: block.timestamp + 1 hours,
             policyNonce: currentPolicyNonceB,
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
         bytes memory sA = _sign(iA, agentAKey);
         bytes memory sB = _sign(iB, agentBKey);
@@ -915,8 +928,7 @@ contract BilateralSettlementTest is Test {
             nonce: 1,
             deadline: block.timestamp + 1 hours,
             policyNonce: currentPolicyNonceA,
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
         SettlementIntent memory attackB = SettlementIntent({
             owner: ownerB,
@@ -928,8 +940,7 @@ contract BilateralSettlementTest is Test {
             nonce: 1,
             deadline: block.timestamp + 1 hours,
             policyNonce: currentPolicyNonceB,
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
         bytes memory attackSA = _sign(attackA, agentAKey);
         bytes memory attackSB = _sign(attackB, agentBKey);
@@ -951,7 +962,7 @@ contract BilateralSettlementTest is Test {
         (SettlementIntent memory iA,) = _makeIntents(100e18, 200e18);
 
         bytes32 typeHash = keccak256(
-            "SettlementIntent(address owner,address sellToken,uint256 sellAmount,address buyToken,uint256 minBuyAmount,address counterparty,uint256 nonce,uint256 deadline,uint256 policyNonce,uint256 feeBps,address feeRecipient)"
+            "SettlementIntent(address owner,address sellToken,uint256 sellAmount,address buyToken,uint256 minBuyAmount,address counterparty,uint256 nonce,uint256 deadline,uint256 policyNonce,uint256 maxFeeBps)"
         );
 
         bytes32 structHash = keccak256(
@@ -966,8 +977,7 @@ contract BilateralSettlementTest is Test {
                 iA.nonce,
                 iA.deadline,
                 iA.policyNonce,
-                iA.feeBps,
-                iA.feeRecipient
+                iA.maxFeeBps
             )
         );
 
@@ -1007,8 +1017,7 @@ contract BilateralSettlementTest is Test {
             nonce: settlement.nonces(ownerA),
             deadline: block.timestamp + 1 hours,
             policyNonce: registry.policyNonce(ownerA),
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
         SettlementIntent memory iB = SettlementIntent({
             owner: ownerB,
@@ -1020,8 +1029,7 @@ contract BilateralSettlementTest is Test {
             nonce: settlement.nonces(ownerB),
             deadline: block.timestamp + 1 hours,
             policyNonce: registry.policyNonce(ownerB),
-            feeBps: settlement.feeBps(),
-            feeRecipient: settlement.feeRecipient()
+            maxFeeBps: settlement.feeBps()
         });
 
         settlement.settle(iA, _sign(iA, agentAKey), iB, _sign(iB, agentBKey));

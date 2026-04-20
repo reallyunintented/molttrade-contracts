@@ -56,10 +56,10 @@ interface IBilateralSettlement {
     /// current `pendingOwner`.
     function acceptOwnership() external;
 
-    /// @notice Current protocol fee in basis points for newly quoted settlements.
+    /// @notice Current protocol fee in basis points applied at settle time.
     function feeBps() external view returns (uint256);
 
-    /// @notice Current protocol fee recipient for newly quoted settlements.
+    /// @notice Current protocol fee recipient applied at settle time.
     function feeRecipient() external view returns (address);
 
     /// @notice Update fee config for future settlements.

@@ -27,6 +27,5 @@ struct SettlementIntent {
     uint256 nonce; // per-owner replay protection
     uint256 deadline; // unix timestamp
     uint256 policyNonce; // must match registry.policyNonce(owner) at settle time
-    uint256 feeBps; // settlement fee config snapshot, capped onchain
-    address feeRecipient; // settlement fee recipient snapshot
+    uint256 maxFeeBps; // signer-authorized upper bound for the settlement fee
 }
