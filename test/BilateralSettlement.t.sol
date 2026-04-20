@@ -1029,4 +1029,49 @@ contract BilateralSettlementTest is Test {
         assertEq(tokenB.balanceOf(ownerA), 200e18);
         assertEq(feeToken.balanceOf(ownerB), 99e18); // 100e18 - 1% fee
     }
+
+    // ── cancelNonce ───────────────────────────────────────────────────────────
+
+    function test_cancelNonce_bumpsNonce() public {
+        uint256 before = settlement.nonces(ownerA);
+        vm.prank(ownerA);
+        settlement.cancelNonce();
+        assertEq(settlement.nonces(ownerA), before + 1);
+    }
+
+    function test_cancelNonce_invalidatesSignedIntent() public {
+        (SettlementIntent memory iA, SettlementIntent memory iB) = _makeIntents(100e18, 200e18);
+        bytes memory sA = _sign(iA, agentAKey);
+        bytes memory sB = _sign(iB, agentBKey);
+
+        // Owner A cancels their next nonce — the intent A signed at that nonce
+        // is now stale.
+        vm.prank(ownerA);
+        settlement.cancelNonce();
+
+        vm.expectRevert(BilateralSettlement.BadNonce.selector);
+        settlement.settle(iA, sA, iB, sB);
+    }
+
+    function test_cancelNonce_freshIntentSucceeds() public {
+        vm.prank(ownerA);
+        settlement.cancelNonce();
+
+        // Re-sign at the new (post-cancel) nonce; settlement must work normally.
+        (SettlementIntent memory iA, SettlementIntent memory iB) = _makeIntents(100e18, 200e18);
+        bytes memory sA = _sign(iA, agentAKey);
+        bytes memory sB = _sign(iB, agentBKey);
+
+        settlement.settle(iA, sA, iB, sB);
+
+        assertEq(tokenB.balanceOf(ownerA), 200e18);
+        assertEq(tokenA.balanceOf(ownerB), 100e18);
+    }
+
+    function test_cancelNonce_doesNotAffectOtherOwners() public {
+        uint256 beforeB = settlement.nonces(ownerB);
+        vm.prank(ownerA);
+        settlement.cancelNonce();
+        assertEq(settlement.nonces(ownerB), beforeB);
+    }
 }

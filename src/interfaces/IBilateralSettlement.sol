@@ -22,6 +22,7 @@ interface IBilateralSettlement {
         uint256 feeBps
     );
     event FeeUpdated(uint256 feeBps, address feeRecipient);
+    event NonceCancelled(address indexed owner, uint256 cancelledNonce);
 
     /// @notice Atomically settle a matched pair of signed intents.
     function settle(
@@ -63,6 +64,10 @@ interface IBilateralSettlement {
 
     /// @notice Update fee config for future settlements.
     function setFee(uint256 bps, address recipient) external;
+
+    /// @notice Burn the caller's next intent nonce. Lets an owner invalidate a
+    /// single in-flight intent without revoking or pausing the policy.
+    function cancelNonce() external;
 
     /// @notice Pause new settlements until `unpause` is called.
     function pause() external;

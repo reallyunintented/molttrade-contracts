@@ -85,6 +85,14 @@ contract BilateralSettlement is IBilateralSettlement {
         emit FeeUpdated(bps, recipient);
     }
 
+    /// @notice Burn the caller's next intent nonce. The owner — not the agent —
+    /// invalidates one pending signed intent without touching policy state, so
+    /// other in-flight intents from the same agent remain valid.
+    function cancelNonce() external {
+        uint256 cancelled = nonces[msg.sender]++;
+        emit NonceCancelled(msg.sender, cancelled);
+    }
+
     /// @notice Pause new settlements. Only callable by owner.
     function pause() external onlyOwner {
         if (paused) revert AlreadyPaused();
