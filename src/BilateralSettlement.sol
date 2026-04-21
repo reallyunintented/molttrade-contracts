@@ -3,14 +3,13 @@ pragma solidity 0.8.24;
 
 import "./interfaces/IBilateralSettlement.sol";
 import "./interfaces/IPolicyRegistry.sol";
+import "./libraries/ECDSA.sol";
 import "./libraries/SafeToken.sol";
 import "./types/MoltTradeTypes.sol";
 
 contract BilateralSettlement is IBilateralSettlement {
     uint256 public constant MAX_FEE_BPS = 100;
     uint256 private constant BPS_DENOMINATOR = 10_000;
-    uint256 private constant SECP256K1N_HALVED =
-        0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0;
     bytes32 private constant EIP712_DOMAIN_TYPEHASH = keccak256(
         "EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)"
     );
@@ -23,7 +22,7 @@ contract BilateralSettlement is IBilateralSettlement {
     uint256 private immutable _cachedChainId;
 
     bytes32 private constant INTENT_TYPEHASH = keccak256(
-        "SettlementIntent(address owner,address sellToken,uint256 sellAmount,address buyToken,uint256 minBuyAmount,address counterparty,uint256 nonce,uint256 deadline,uint256 policyNonce,uint256 feeBps,address feeRecipient)"
+        "SettlementIntent(address owner,address sellToken,uint256 sellAmount,address buyToken,uint256 minBuyAmount,address counterparty,uint256 nonce,uint256 deadline,uint256 policyNonce,uint256 maxFeeBps)"
     );
 
     mapping(address => uint256) public nonces;
@@ -83,6 +82,14 @@ contract BilateralSettlement is IBilateralSettlement {
         feeRecipient = recipient;
 
         emit FeeUpdated(bps, recipient);
+    }
+
+    /// @notice Burn the caller's next intent nonce. The owner — not the agent —
+    /// invalidates one pending signed intent without touching policy state, so
+    /// other in-flight intents from the same agent remain valid.
+    function cancelNonce() external {
+        uint256 cancelled = nonces[msg.sender]++;
+        emit NonceCancelled(msg.sender, cancelled);
     }
 
     /// @notice Pause new settlements. Only callable by owner.
@@ -160,8 +167,7 @@ contract BilateralSettlement is IBilateralSettlement {
                         intent.nonce,
                         intent.deadline,
                         intent.policyNonce,
-                        intent.feeBps,
-                        intent.feeRecipient
+                        intent.maxFeeBps
                     )
                 )
             )
@@ -189,29 +195,31 @@ contract BilateralSettlement is IBilateralSettlement {
         nonces[intentB.owner]++;
 
         // 3. Signature verification — signer must be active agent per registry
-        address agentA = registry.activeAgent(intentA.owner);
-        address agentB = registry.activeAgent(intentB.owner);
-        if (agentA == address(0)) revert PolicyCheckFailed(intentA.owner);
-        if (agentB == address(0)) revert PolicyCheckFailed(intentB.owner);
-        // agentA/agentB != address(0) guaranteed above; ecrecover returning address(0) cannot bypass these checks
-        if (_recover(intentDigest(intentA), sigA) != agentA) revert BadSignature();
-        if (_recover(intentDigest(intentB), sigB) != agentB) revert BadSignature();
+        {
+            address agentA = registry.activeAgent(intentA.owner);
+            address agentB = registry.activeAgent(intentB.owner);
+            if (agentA == address(0)) revert PolicyCheckFailed(intentA.owner);
+            if (agentB == address(0)) revert PolicyCheckFailed(intentB.owner);
+            if (_recover(intentDigest(intentA), sigA) != agentA) revert BadSignature();
+            if (_recover(intentDigest(intentB), sigB) != agentB) revert BadSignature();
+        }
 
         // 4. Token compatibility: tokens must differ; A sells what B buys and vice versa
         if (intentA.sellToken == intentB.sellToken) revert IncompatibleIntents();
         if (intentA.sellToken != intentB.buyToken) revert IncompatibleIntents();
         if (intentB.sellToken != intentA.buyToken) revert IncompatibleIntents();
 
-        // 5. Fee config must match across intents and the current onchain setting
-        if (intentA.feeBps != intentB.feeBps) revert InvalidFeeConfig();
-        if (intentA.feeRecipient != intentB.feeRecipient) revert InvalidFeeConfig();
-        if (intentA.feeBps != feeBps) revert InvalidFeeConfig();
-        if (intentA.feeRecipient != feeRecipient) revert InvalidFeeConfig();
-        if (intentA.feeBps > MAX_FEE_BPS) revert InvalidFeeConfig();
-        if (intentA.feeBps > 0 && intentA.feeRecipient == address(0)) revert InvalidFeeConfig();
+        // 5. Fee config is resolved at settle-time. Intents bound only the
+        // maximum fee each signer is willing to accept.
+        uint256 currentFeeBps = feeBps;
+        address currentFeeRecipient = feeRecipient;
+        if (currentFeeBps > MAX_FEE_BPS) revert InvalidFeeConfig();
+        if (currentFeeBps > 0 && currentFeeRecipient == address(0)) revert InvalidFeeConfig();
+        if (currentFeeBps > intentA.maxFeeBps) revert InvalidFeeConfig();
+        if (currentFeeBps > intentB.maxFeeBps) revert InvalidFeeConfig();
 
-        uint256 feeAmountA = _feeAmount(intentA.sellAmount, intentA.feeBps);
-        uint256 feeAmountB = _feeAmount(intentB.sellAmount, intentB.feeBps);
+        uint256 feeAmountA = _feeAmount(intentA.sellAmount, currentFeeBps);
+        uint256 feeAmountB = _feeAmount(intentB.sellAmount, currentFeeBps);
         uint256 netAmountA = intentA.sellAmount - feeAmountA;
         uint256 netAmountB = intentB.sellAmount - feeAmountB;
 
@@ -234,21 +242,11 @@ contract BilateralSettlement is IBilateralSettlement {
         _checkPolicy(intentA, intentB.owner);
         _checkPolicy(intentB, intentA.owner);
 
-        // 10. Snapshot recipient balances before transfers
-        // intentA.buyToken == intentB.sellToken (enforced step 4)
-        // intentB.buyToken == intentA.sellToken (enforced step 4)
-        uint256 preOwnerABuy = SafeToken.balanceOf(intentA.buyToken, intentA.owner);
-        uint256 preOwnerBBuy = SafeToken.balanceOf(intentB.buyToken, intentB.owner);
+        _settleTransfers(
+            intentA, intentB, currentFeeRecipient, feeAmountA, feeAmountB, netAmountA, netAmountB
+        );
 
-        // 11. Atomic transfers: skim protocol fee, then cross the net amounts between owners
-        _transferSellSide(intentA, intentB.owner, feeAmountA, netAmountA);
-        _transferSellSide(intentB, intentA.owner, feeAmountB, netAmountB);
-
-        // 12. Verify actual balance deltas meet minimums (catches fee-on-transfer tokens)
-        _assertMinReceived(intentA, preOwnerABuy);
-        _assertMinReceived(intentB, preOwnerBBuy);
-
-        _emitSettled(intentA, intentB, feeAmountA, feeAmountB);
+        _emitSettled(intentA, intentB, currentFeeRecipient, currentFeeBps, feeAmountA, feeAmountB);
     }
 
     function _feeAmount(uint256 amount, uint256 bps) private pure returns (uint256) {
@@ -270,15 +268,37 @@ contract BilateralSettlement is IBilateralSettlement {
         }
     }
 
+    function _settleTransfers(
+        SettlementIntent calldata intentA,
+        SettlementIntent calldata intentB,
+        address currentFeeRecipient,
+        uint256 feeAmountA,
+        uint256 feeAmountB,
+        uint256 netAmountA,
+        uint256 netAmountB
+    ) private {
+        // intentA.buyToken == intentB.sellToken (enforced in settle step 4)
+        // intentB.buyToken == intentA.sellToken (enforced in settle step 4)
+        uint256 preOwnerABuy = SafeToken.balanceOf(intentA.buyToken, intentA.owner);
+        uint256 preOwnerBBuy = SafeToken.balanceOf(intentB.buyToken, intentB.owner);
+
+        _transferSellSide(intentA, intentB.owner, currentFeeRecipient, feeAmountA, netAmountA);
+        _transferSellSide(intentB, intentA.owner, currentFeeRecipient, feeAmountB, netAmountB);
+
+        _assertMinReceived(intentA, preOwnerABuy);
+        _assertMinReceived(intentB, preOwnerBBuy);
+    }
+
     function _transferSellSide(
         SettlementIntent calldata intent,
         address counterpartyOwner,
+        address currentFeeRecipient,
         uint256 feeAmount,
         uint256 netAmount
     ) private {
         if (feeAmount > 0) {
             SafeToken.safeTransferFrom(
-                intent.sellToken, intent.owner, intent.feeRecipient, feeAmount
+                intent.sellToken, intent.owner, currentFeeRecipient, feeAmount
             );
         }
         if (netAmount > 0) {
@@ -289,6 +309,8 @@ contract BilateralSettlement is IBilateralSettlement {
     function _emitSettled(
         SettlementIntent calldata intentA,
         SettlementIntent calldata intentB,
+        address currentFeeRecipient,
+        uint256 currentFeeBps,
         uint256 feeAmountA,
         uint256 feeAmountB
     ) private {
@@ -301,8 +323,8 @@ contract BilateralSettlement is IBilateralSettlement {
             intentB.sellAmount,
             feeAmountA,
             feeAmountB,
-            intentA.feeRecipient,
-            intentA.feeBps
+            currentFeeRecipient,
+            currentFeeBps
         );
     }
 
@@ -318,20 +340,8 @@ contract BilateralSettlement is IBilateralSettlement {
     }
 
     function _recover(bytes32 digest, bytes calldata sig) private pure returns (address) {
-        if (sig.length != 65) revert BadSignature();
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := calldataload(sig.offset)
-            s := calldataload(add(sig.offset, 32))
-            v := byte(0, calldataload(add(sig.offset, 64)))
-        }
-        if (uint256(s) > SECP256K1N_HALVED) revert BadSignature();
-        if (v != 27 && v != 28) revert BadSignature();
-
-        address recovered = ecrecover(digest, v, r, s);
-        if (recovered == address(0)) revert BadSignature();
+        (address recovered, ECDSA.RecoverError err,) = ECDSA.tryRecover(digest, sig);
+        if (err != ECDSA.RecoverError.NoError) revert BadSignature();
         return recovered;
     }
 }

@@ -17,16 +17,33 @@ contract PolicyRegistry is IPolicyRegistry {
 
     uint256 public constant MAX_ALLOWLIST_LENGTH = 20;
 
+    struct SellTokenPolicy {
+        bool allowed;
+        uint256 cap; // 0 = no cap when allowed
+    }
+
     struct StoredPolicy {
         PolicyConfig config;
-        PolicyAddresses addrs;
         bool isRevoked;
         bool isPaused;
         bool exists;
+        // Bumped on every setPolicy. Allowlist mappings are keyed on this so a
+        // fresh policy starts with empty lookups without paying to clear the old.
+        uint64 version;
+        // 0 means the counterparty allowlist is open (any counterparty allowed).
+        uint64 counterpartyCount;
     }
 
     mapping(address => StoredPolicy) private _policies;
     mapping(address => uint256) public policyNonce;
+
+    // owner => version => token => SellTokenPolicy
+    mapping(address => mapping(uint64 => mapping(address => SellTokenPolicy))) private
+        _sellTokenPolicies;
+    // owner => version => token => allowed
+    mapping(address => mapping(uint64 => mapping(address => bool))) private _buyTokenAllowed;
+    // owner => version => counterparty => allowed
+    mapping(address => mapping(uint64 => mapping(address => bool))) private _counterpartyAllowed;
 
     function setPolicy(PolicyConfig calldata config, PolicyAddresses calldata addrs) external {
         if (config.agent == address(0)) revert ZeroAgent();
@@ -42,12 +59,31 @@ contract PolicyRegistry is IPolicyRegistry {
         _checkNoZeroAddresses(addrs.allowedBuyTokens);
         _checkNoZeroAddresses(addrs.allowedCounterparties);
         _checkDuplicateSellTokens(addrs.allowedSellTokens);
+
         policyNonce[msg.sender]++;
-        // Intentionally overwrites any prior policy including revoked ones.
-        // Revocation is not permanent: owners can re-register to resume delegation.
-        _policies[msg.sender] = StoredPolicy({
-            config: config, addrs: addrs, isRevoked: false, isPaused: false, exists: true
-        });
+
+        StoredPolicy storage p = _policies[msg.sender];
+        // Bump version. Old allowlist mapping entries remain in storage but are
+        // unreachable because every read uses the new version key.
+        uint64 newVersion = p.version + 1;
+        p.config = config;
+        p.isRevoked = false;
+        p.isPaused = false;
+        p.exists = true;
+        p.version = newVersion;
+        p.counterpartyCount = uint64(addrs.allowedCounterparties.length);
+
+        for (uint256 i = 0; i < addrs.allowedSellTokens.length; i++) {
+            _sellTokenPolicies[msg.sender][newVersion][addrs.allowedSellTokens[i]] =
+                SellTokenPolicy({ allowed: true, cap: addrs.maxSellAmountsPerToken[i] });
+        }
+        for (uint256 i = 0; i < addrs.allowedBuyTokens.length; i++) {
+            _buyTokenAllowed[msg.sender][newVersion][addrs.allowedBuyTokens[i]] = true;
+        }
+        for (uint256 i = 0; i < addrs.allowedCounterparties.length; i++) {
+            _counterpartyAllowed[msg.sender][newVersion][addrs.allowedCounterparties[i]] = true;
+        }
+
         emit PolicySet(msg.sender, config.agent, config.validUntil);
     }
 
@@ -104,41 +140,16 @@ contract PolicyRegistry is IPolicyRegistry {
         StoredPolicy storage p = _policies[owner];
         if (!p.exists || p.isRevoked || p.isPaused) return false;
         if (p.config.validUntil != 0 && block.timestamp > p.config.validUntil) return false;
-        bool sellTokenAllowed;
-        uint256 sellTokenCap;
-        (sellTokenAllowed, sellTokenCap) = _sellTokenPolicy(p.addrs, sellToken);
-        if (!sellTokenAllowed) return false;
-        if (!_inList(p.addrs.allowedBuyTokens, buyToken)) return false;
-        if (sellTokenCap != 0 && amount > sellTokenCap) {
-            return false;
-        }
-        if (
-            p.addrs.allowedCounterparties.length > 0
-                && !_inList(p.addrs.allowedCounterparties, counterparty)
-        ) {
+
+        uint64 version = p.version;
+        SellTokenPolicy storage stp = _sellTokenPolicies[owner][version][sellToken];
+        if (!stp.allowed) return false;
+        if (stp.cap != 0 && amount > stp.cap) return false;
+        if (!_buyTokenAllowed[owner][version][buyToken]) return false;
+        if (p.counterpartyCount > 0 && !_counterpartyAllowed[owner][version][counterparty]) {
             return false;
         }
         return true;
-    }
-
-    function _inList(address[] storage list, address target) private view returns (bool) {
-        for (uint256 i = 0; i < list.length; i++) {
-            if (list[i] == target) return true;
-        }
-        return false;
-    }
-
-    function _sellTokenPolicy(PolicyAddresses storage addrs, address sellToken)
-        private
-        view
-        returns (bool allowed, uint256 cap)
-    {
-        for (uint256 i = 0; i < addrs.allowedSellTokens.length; i++) {
-            if (addrs.allowedSellTokens[i] == sellToken) {
-                return (true, addrs.maxSellAmountsPerToken[i]);
-            }
-        }
-        return (false, 0);
     }
 
     function _checkAllowlistLength(uint256 length) private pure {

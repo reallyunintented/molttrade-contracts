@@ -20,7 +20,7 @@ contract PolicyRegistryTest is Test {
     }
 
     function _defaultConfig() internal view returns (PolicyConfig memory) {
-        return PolicyConfig({agent: agent, validUntil: uint64(block.timestamp + 1 days)});
+        return PolicyConfig({ agent: agent, validUntil: uint64(block.timestamp + 1 days) });
     }
 
     function _defaultAddrs() internal view returns (PolicyAddresses memory) {
@@ -445,5 +445,165 @@ contract PolicyRegistryTest is Test {
         vm.prank(owner);
         vm.expectRevert(PolicyRegistry.ZeroAddressInAllowlist.selector);
         registry.setPolicy(_defaultConfig(), addrs);
+    }
+
+    // ── version-bump cleanup (mapping refactor) ───────────────────────────────
+
+    function test_setPolicy_dropsPreviousSellTokenWhenReSet() public {
+        // First policy allows tokenA.
+        vm.prank(owner);
+        registry.setPolicy(_defaultConfig(), _defaultAddrs());
+        assertTrue(registry.checkTrade(owner, tokenA, tokenB, 500e18, counterparty));
+
+        // Replace with a policy that no longer lists tokenA.
+        address newSell = address(0xB3);
+        address[] memory sell = new address[](1);
+        sell[0] = newSell;
+        uint256[] memory caps = new uint256[](1);
+        caps[0] = 1000e18;
+        address[] memory buy = new address[](1);
+        buy[0] = tokenB;
+        address[] memory cp = new address[](0);
+        vm.prank(owner);
+        registry.setPolicy(
+            _defaultConfig(),
+            PolicyAddresses({
+                allowedSellTokens: sell,
+                maxSellAmountsPerToken: caps,
+                allowedBuyTokens: buy,
+                allowedCounterparties: cp
+            })
+        );
+
+        // Old sell token must no longer be tradable.
+        assertFalse(registry.checkTrade(owner, tokenA, tokenB, 500e18, counterparty));
+        assertTrue(registry.checkTrade(owner, newSell, tokenB, 500e18, counterparty));
+    }
+
+    function test_setPolicy_dropsPreviousBuyTokenWhenReSet() public {
+        vm.prank(owner);
+        registry.setPolicy(_defaultConfig(), _defaultAddrs());
+        assertTrue(registry.checkTrade(owner, tokenA, tokenB, 500e18, counterparty));
+
+        address newBuy = address(0xB4);
+        address[] memory sell = new address[](1);
+        sell[0] = tokenA;
+        uint256[] memory caps = new uint256[](1);
+        caps[0] = 1000e18;
+        address[] memory buy = new address[](1);
+        buy[0] = newBuy;
+        address[] memory cp = new address[](0);
+        vm.prank(owner);
+        registry.setPolicy(
+            _defaultConfig(),
+            PolicyAddresses({
+                allowedSellTokens: sell,
+                maxSellAmountsPerToken: caps,
+                allowedBuyTokens: buy,
+                allowedCounterparties: cp
+            })
+        );
+
+        // Old buy token no longer allowed; new one is.
+        assertFalse(registry.checkTrade(owner, tokenA, tokenB, 500e18, counterparty));
+        assertTrue(registry.checkTrade(owner, tokenA, newBuy, 500e18, counterparty));
+    }
+
+    function test_setPolicy_dropsPreviousCounterpartyWhenReSet() public {
+        // First policy: counterparty allowlist of [counterparty].
+        address[] memory sell = new address[](1);
+        sell[0] = tokenA;
+        uint256[] memory caps = new uint256[](1);
+        caps[0] = 1000e18;
+        address[] memory buy = new address[](1);
+        buy[0] = tokenB;
+        address[] memory cp = new address[](1);
+        cp[0] = counterparty;
+        vm.prank(owner);
+        registry.setPolicy(
+            _defaultConfig(),
+            PolicyAddresses({
+                allowedSellTokens: sell,
+                maxSellAmountsPerToken: caps,
+                allowedBuyTokens: buy,
+                allowedCounterparties: cp
+            })
+        );
+        assertTrue(registry.checkTrade(owner, tokenA, tokenB, 500e18, counterparty));
+
+        // Re-set with a different counterparty list. Old `counterparty` must be excluded.
+        address otherCp = address(0xCAFE);
+        address[] memory cp2 = new address[](1);
+        cp2[0] = otherCp;
+        vm.prank(owner);
+        registry.setPolicy(
+            _defaultConfig(),
+            PolicyAddresses({
+                allowedSellTokens: sell,
+                maxSellAmountsPerToken: caps,
+                allowedBuyTokens: buy,
+                allowedCounterparties: cp2
+            })
+        );
+
+        assertFalse(registry.checkTrade(owner, tokenA, tokenB, 500e18, counterparty));
+        assertTrue(registry.checkTrade(owner, tokenA, tokenB, 500e18, otherCp));
+    }
+
+    function test_setPolicy_emptyCounterpartyListOpensAfterRestrictedOne() public {
+        // First: restricted to `counterparty`.
+        address[] memory sell = new address[](1);
+        sell[0] = tokenA;
+        uint256[] memory caps = new uint256[](1);
+        caps[0] = 1000e18;
+        address[] memory buy = new address[](1);
+        buy[0] = tokenB;
+        address[] memory cp = new address[](1);
+        cp[0] = counterparty;
+        vm.prank(owner);
+        registry.setPolicy(
+            _defaultConfig(),
+            PolicyAddresses({
+                allowedSellTokens: sell,
+                maxSellAmountsPerToken: caps,
+                allowedBuyTokens: buy,
+                allowedCounterparties: cp
+            })
+        );
+        assertFalse(registry.checkTrade(owner, tokenA, tokenB, 500e18, address(0xDEAD)));
+
+        // Re-set with empty list — counterparty allowlist becomes open again.
+        vm.prank(owner);
+        registry.setPolicy(_defaultConfig(), _defaultAddrs());
+        assertTrue(registry.checkTrade(owner, tokenA, tokenB, 500e18, address(0xDEAD)));
+    }
+
+    function test_setPolicy_capChangesOnReSet() public {
+        vm.prank(owner);
+        registry.setPolicy(_defaultConfig(), _defaultAddrs());
+        assertTrue(registry.checkTrade(owner, tokenA, tokenB, 1000e18, counterparty));
+        assertFalse(registry.checkTrade(owner, tokenA, tokenB, 1001e18, counterparty));
+
+        // New policy raises the cap on the same sell token.
+        address[] memory sell = new address[](1);
+        sell[0] = tokenA;
+        uint256[] memory caps = new uint256[](1);
+        caps[0] = 5000e18;
+        address[] memory buy = new address[](1);
+        buy[0] = tokenB;
+        address[] memory cp = new address[](0);
+        vm.prank(owner);
+        registry.setPolicy(
+            _defaultConfig(),
+            PolicyAddresses({
+                allowedSellTokens: sell,
+                maxSellAmountsPerToken: caps,
+                allowedBuyTokens: buy,
+                allowedCounterparties: cp
+            })
+        );
+
+        assertTrue(registry.checkTrade(owner, tokenA, tokenB, 5000e18, counterparty));
+        assertFalse(registry.checkTrade(owner, tokenA, tokenB, 5001e18, counterparty));
     }
 }
