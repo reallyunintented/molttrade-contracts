@@ -80,6 +80,15 @@ This is real code, but it is still early-stage infrastructure.
 - intended first usage: narrow invited-alpha style operation
 - audit status: not publicly audited
 
+## Deployment Status
+
+- current public release line: `v0.2.0`
+- release posture: source release only
+- canonical deployed addresses: not published yet
+
+Until a later release publishes addresses and a deployment manifest, this repo
+should be treated as the public source code and test suite only.
+
 ## Prerequisites
 
 - Foundry (`forge`)
